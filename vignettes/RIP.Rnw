@@ -1,0 +1,184 @@
+%\VignetteIndexEntry{RIP Manual}
+%\VignetteKeywords{gene regulatory networks}
+%\VignetteKeywords{machine learning}
+%\VignetteDepends{RIP}
+%\VignettePackage{RIP}
+
+\documentclass[a4paper]{article}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{natbib}
+\geometry{left=2.5cm,right=2.5cm}
+\setlength{\parindent}{0cm}
+%\setlength{\parindent}{0.8cm}
+%\setlength{\parskip}{6pt}
+\renewcommand{\baselinestretch}{1.2}
+
+\bibliographystyle{abbrvnat}
+
+\begin{document}
+\title{Predicting regulatory interactions between human transcription factors and target genes with \texttt{RIP}}
+\author{Tobias Bauer}
+\date{\today}
+\maketitle
+
+%\setlength{\parskip}{0pt}
+%\vspace{12pt}
+
+\section{Introduction}
+In this vignette, we show how the functions contained in the \texttt{R} package \texttt{RIP} (Regulatory Interaction Predictor) can be used to apply the RIP master classifier as described in \citet{RIP}.
+
+For details on the algorithms behind these functions, see the paper. The package itself and additional data is available at \href{http://www.ichip.de/software/RIP.html}{http://www.ichip.de/software/RIP.html}.
+
+\section{General Workflow}\label{info}
+As usual, it is necessary to load the package.
+<<echo=false>>=
+options(width=75)
+set.seed(123456)
+@
+<<results=hide>>=
+library(RIP)
+@
+In the following, we use some \texttt{ExpressionSet} objects provided by the \texttt{RIP} package to illustrate how the
+functions work.
+<<>>=
+data(RIP.demo_ExpressionSets)
+@
+The data consists of ten \texttt{ExpressionSet} objects and a vector containing their names. Each ExpressionSet resembles a dataset of rma-normalized Affymetrix hgu133a microarrays. Of course, any other microarray platform can be used, but they should be consistent within each dataset series. The \texttt{featureNames} of each ExpressionSet have been set to the Entrez gene ID annotation (see below for more information on how to provide annotation) and they all contain the same number of genes in the same order.
+
+The RIP classifier bases its decision if a there is a regulatory interaction (RI) between a transcription factor (TF) and a gene on features derived from three different aspects:
+\begin{itemize}
+\item position weight matrix (PWM) scans for TF binding motifs of target gene promoters
+\item information about co-regulation of target genes known from a gold standard
+\item correlation of gene expression levels
+\end{itemize}
+
+Retrieving genome-wide PWM scans and information about co-regulation requires long pre-processing by a number of scripts, so the \texttt{RIP} package already provides the essentials. However, the correlation data is the part you can jump in to discover RIs between genes from your data and 303 potential TFs included in RIP.
+
+Until you have your own data ready, you can take a look at the provided datasets:
+
+<<strip.white=all>>=
+ls(pattern="test_eset")
+@
+
+Each of these sets contains only 1,000 genes and a maximum of 20 samples, which allows fast computation. (They were derived from some of the CAMDA 2007 datasets published in \href{http://www.ebi.ac.uk/arrayexpress/experiments/E-TABM-185}{\textit{Array Express} database, accession E-TABM-185}. Their accession IDs are GSE2361, GSE4475, GSE1456, GSE1577, GSE2280, GSE3307, GSE781, GSE474, GSE1420, GSE1460 for testset 1 through 10 respectively.)
+
+<<strip.white=all>>=
+dim(test_eset_01)
+@
+
+\subsection{Step 1: Calculate Correlation}
+The first thing you want to do is to calculate the Pearson correlation between all genes of the ExpressionSets with the function \texttt{createCorData}. It takes the following arguments:
+
+<<strip.white=all>>=
+str(args(createCorData))
+@
+
+You need to provide a vector with the names of one or more ExpressionSets that are available in the workspace. Such a vector can be found in the variable
+
+<<strip.white=all>>=
+test_eset.names
+@
+
+If the Entrez gene IDs are not in the \texttt{featureNames} of the ExpressionSet(s), you need to pass them in a vector to the parameter \texttt{entrez.annotation}, where each entry is the Entrez ID of the corresponding row in the \texttt{exprs} slot of the ExpressionSet(s). Currently, all ExpressionSets must have the same genes and order! Entrez IDs are required for the process, because the datasets will be reduced to those IDs available in the RIP classifier.
+
+The function \texttt{createCorData} will calculate the Pearson correlation of all datasets. The results are saved in a separate file for each dataset containing a variable labeled 'cordata', which is of class \texttt{CorData}.
+
+Notes: \begin{itemize}
+\item If you plan to use >10,000 genes and/or lots of datasets, this will require several Gb of RAM and disc space and eventually may take a while. You should consider running several instances in parallel in that case.
+\item The gold standard includes the genes that can be found in \texttt{RIP.universe\$core.genes}. If you do not include all of these for \texttt{CorData} creation, some of the ten RI features (see below) may be calculated inaccurately. Therefore, you ought to include as many of them as possible.
+\end{itemize}
+
+For demonstration, use the test data:
+
+<<results=hide>>=
+myFilenames <- createCorData(ExpressionSets=test_eset.names, series="RIP_testset")
+@
+
+The function returns the filenames that have just been created, and they are needed for the next step (correlation neighbors calculation). For more details on \texttt{createCorData} usage, see
+\begin{verbatim}
+> ?createCorData
+\end{verbatim}
+
+\subsection{Step 2: Correlation Neighbors}
+Having created all required \texttt{CorData} objects and files, you can now calculate the correlation neighbors of the datasets with defined thresholds for correlation coefficients (CC) and Fraction of Conditions (FoC). For a detailed explanation, please refer to the \texttt{RIP} paper and see the help of the \texttt{getCorNeighbors} function.
+\begin{verbatim}
+> ?getCorNeighbors
+\end{verbatim}
+
+The function takes the filenames output from the previous step, loads all \texttt{CorData} objects one by one and processes them. The output is a single object of class \texttt{CorNeighbors}. It contains not only the correlation neighbors, but also the average correlation between all provided genes, which is required later for feature calculation.
+
+<<results=hide>>=
+myCorNeighbors <- getCorNeighbors(cordata.filenames=myFilenames,
+CC=0.6, FoC=0.25)
+@
+
+Note: A \texttt{CorNeighbors} object generated from 4064 selected gene expression profiles from 76 of all \href{http://www.ebi.ac.uk/arrayexpress/experiments/E-TABM-185}{CAMDA 2007 datasets} (which was used for prediction of general RIs in the \texttt{RIP} publication) is made available for download at \href{http://www.ichip.de/software/RIP.html}{http://www.ichip.de/software/RIP.html}. It can be used to obtain results for RIs that are very close\footnote{For space reasons, the master classifier contained in the \texttt{RIP}-package contains a selection of 100 trained SVMs (rather than all 2000 SVMs that were used in the paper), where each of the 20 Ensemble-classifiers contributed 5 SVMs. The estimated performance of this subset is equivalent to that of the large master classifer.} to those described in the paper (supplement, provided in the \texttt{RIP.RIpredictions}-object).
+
+\subsection{Step 3: Define RIs}
+Next you need to define some TFs and target genes you want to be evaluated, i.e. predict RIs between them. Of course you can just take all 303 available TFs and see how they score with all your genes, but large-scale feature calculation can become time-consuming. So unless you're patient and have enough to do meanwhile, we suggest to either parallelize your scripts or to reduce the number of TFs and genes.
+
+For demonstration, we select 25 random TFs and 100 random genes from the testset data:
+
+<<strip.white=all>>=
+TFs <- sample(RIP.universe$TF, size=25)
+str(TFs)
+targets <- sample(myCorNeighbors@entrez_annotation, size=100)
+str(targets)
+@
+
+The function \texttt{createPotentialRIs} returns a \texttt{data.frame} with one RI per row.
+<<strip.white=all>>=
+myRIs <- createPotentialRIs(target.genes=targets, TFs=TFs,
+annotation.targets="entrezID")
+head(myRIs)
+@
+
+For all genes and TFs available in the RIP classifer, see the \texttt{RIP.universe}.
+<<strip.white=all>>=
+str(RIP.universe)
+@
+
+\subsection{Step 4: RI Features}
+After RI assembly, the function \texttt{calculateRIPfeatures} is applied to calculate the ten RI features required for classification as described in the paper. Some features take longer than others. The function shows a progress bar for these. Finally, \texttt{calculateRIPfeatures} returns an object of class \texttt{RIfeatures}.
+
+<<results=hide>>=
+myRIfeatures <- calculateRIPfeatures(pRIs=myRIs, cor.neighbors=myCorNeighbors)
+@
+
+\subsection{Step 5: RIP Classifier}
+In order to apply the RIP classifier to the RI candidates, all you need to do is to call \texttt{classifyRIs} and pass the \texttt{RIfeatures} object. The parameter \texttt{percent.votes} defines the percentage of votes from the RIP master classifier required to label an RI positive (see the \texttt{RIP} publication for details) and controls the stringency. You can adjust it to any value between 0 and 100, for example lower it if you don't obtain satisfactory results with the default '80'. In general, the lower the value, the more predicted RIs you get at the cost of more false positives. (Setting it to '0' doesn't make much sense unless you want a complete list of your RIs with the votes and confidence as an output, to be used as a score for example.) We found that the default serves as a decent trade-off betwee false postives and false negatives at which \texttt{RIP} still outperforms comparable methods by far.
+
+If you specify the parameter \texttt{filename}, the results will also be written to a csv-file with that name.
+
+<<results=hide>>=
+myClassifedRIs <- classifyRIs(RIfeatures=myRIfeatures, percent.votes=80,
+filename="test_classification_v80.csv")
+@
+<<strip.white=all>>=
+str(myClassifedRIs)
+@
+<<results=hide>>=
+myClassifedRIs <- classifyRIs(RIfeatures=myRIfeatures, percent.votes=60,
+filename="test_classification_v60.csv")
+@
+<<strip.white=all>>=
+str(myClassifedRIs)
+head(myClassifedRIs@predictions)
+@
+
+\section{Follow-Up Analyses / FAQ}
+Now you may be wondering: \textit{What do I do with the predictions?}
+Essentially, a good idea for follow-up experiments is to perform some enrichment analyses with the predicted TF-modules. For example, you could test which TF-modules are associated with pathways you think could be important in your experimental setup. Or maybe find gene ontology (GO) terms that are over-represented in the target genes of your favorite TF...
+
+Such analyses are not (yet) implemented in \texttt{RIP}, but there are many tools already available, e.g. the \texttt{DAVID} tools \citep{DAVID}. For a more or less comprehensive survey, see \citet{Huang}.
+
+\vspace{6pt}
+\textit{Can I trust each single RI and test them in the lab?}
+The estimated confidence should give you an answer to how much you can trust your individual RI, so the predictions are a good basis for hypotheses. However, we rather suggest to perform analyses of \textit{gene sets} first as mentioned above.
+
+In addition, you can compare your predictions to the predicted general RIs from the \texttt{RIP} publication supplement. They can be found in the object \texttt{RIP.RIpredictions}. These are fairly robust given that they were calculated from thousands of samples from a broad clinical spectrum.
+
+\bibliography{references.bib}{}
+\end{document}
+

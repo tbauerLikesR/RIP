@@ -1,0 +1,8 @@
+import(methods, utils, Biobase)
+export(createCorData, getCorNeighbors, createPotentialRIs, calculateRIPfeatures, calculateRIPfeatures, calculateRIPfeatures.default, classifyRIs)
+exportClasses(
+    "CorData",
+     "CorNeighbors",
+     "RIfeatures",
+     "RIpredictions"
+)

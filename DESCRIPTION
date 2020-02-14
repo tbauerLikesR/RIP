@@ -1,0 +1,14 @@
+Package: RIP
+Type: Package
+Title: Application of the RIP classifier to predict regulatory
+        interactions (RIs) between human transcription factors (TFs)
+        and target genes.
+Version: 1.1
+Date: 2012-06-21
+Author: Tobias Bauer
+Maintainer: Tobias Bauer <t.bauer@dkfz.de>
+Description: Create features derived from correlation meta-analysis, position weight matrix scans and co-regulation of genes to predict regulatory interactions between human TFs and target genes. This package provides the functions needed to apply the provided RIP master classifier as described in Bauer et al. (2011) Bioinformatics 27:2239-47.
+License: GPL (>=2)
+LazyLoad: yes
+LazyData: yes
+Depends: R (>= 2.12.0), utils (>= 2.12.0), methods (>= 2.12.0), Biobase (>= 2.10.0)
